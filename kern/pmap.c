@@ -407,8 +407,6 @@ struct Page *
 page_lookup_virtual(struct Page *node, uintptr_t addr, int class, int alloc) {
     assert(class >= 0);
     assert_virtual(node);
-
-
     int nclass = MAX_CLASS;
     while (nclass > class) {
         assert(nclass > 0);
@@ -994,16 +992,12 @@ map_page(struct AddressSpace *spc, uintptr_t addr, struct Page *page, int flags)
     assert(page && spc);
     assert_physical(page);
     assert(!(addr & CLASS_MASK(page->class)));
-    int is_new_page;
 
     /* NOTE ALLOC_WEAK cannot be map()'ed/unmap()'ed
      * since it does not store any
      * metadata and only exits as a part of page table */
-
-    is_new_page = page->refc ? 0 : 1;
-
-    if (!is_new_page) {
-        //cprintf("delete from page_insert\n");
+    if (page->refc) {
+        cprintf("delete from page_insert\n");
         delete_from_lru_list(page);
         add_to_lru_list(page);
     }
@@ -1166,6 +1160,7 @@ alloc_page(int class, int flags) {
             if (!(flags & ALLOC_BOOTMEM) || page2pa(peer) + CLASS_SIZE(class) < BOOT_MEM_SIZE) goto found;
         }
     }
+    cprintf("%d\n", is_swap_full);
     if (!is_swap_full){
         is_swap_full = 1;
         swap_workout(); 
@@ -1214,7 +1209,6 @@ found:
     }
 
     assert(page2pa(new) >= PADDR(end) || page2pa(new) + CLASS_MASK(new->class) < IOPHYSMEM);
-	
     if (new != NULL) {
         add_to_lru_list(new);
     }
@@ -1874,6 +1868,8 @@ init_shadow_pre(void) {
 
 void
 init_memory(void) {
+
+
     int res;
     (void)res;
     is_swap_full = 0;
@@ -1886,7 +1882,6 @@ init_memory(void) {
     if (trace_init) cprintf("Physical memory tree is correct\n");
 
     init_kspace();
-
     /* First, only map kernel itself, kernel stacks, UEFI memory
      * and KASAN shadow memory regions to new kernel address space.
      * Allocated memory should not be touches until address space switch */
@@ -2005,7 +2000,10 @@ init_memory(void) {
     //     [PADDR(bootstack), PADDR(boottop)] as RW-
     // Map [X86ADDR(KERN_PF_STACK_TOP - KERN_PF_STACK_SIZE), KERN_PF_STACK_TOP] to
     //     [PADDR(pfstack), PADDR(pfstacktop)] as RW-
-
+    lru_list = kzalloc_region(LRU_SIZE); 
+    if (lru_list == NULL) {
+        panic("Failed to allocate memory for lru_list");
+    }
     if (map_physical_region(&kspace, FRAMEBUFFER, uefi_lp->FrameBufferBase, (uintptr_t)uefi_lp->FrameBufferSize, PROT_R | PROT_W | PROT_WC) < 0) {
         panic("Can`t map physical region at %p of size %zd", (void *)uefi_lp->FrameBufferBase, (uintptr_t)uefi_lp->FrameBufferSize);
     }
@@ -2121,6 +2119,7 @@ void update_all_pte(struct Page *tail, int swap_index)
     }
 }
 
+
 void swap_workout()
 {
     cprintf("WORKOUT\n");
@@ -2156,6 +2155,5 @@ void swap_push(struct Page *tail)
 
     tail->state = SWAPPED_PAGE;
 
- 
     update_all_pte(tail, k);
 }

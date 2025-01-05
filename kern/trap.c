@@ -343,7 +343,9 @@ trap(struct Trapframe *tf) {
 
         uintptr_t va = rcr2();
         if (va & PTE_PWT) {
+            cprintf("!!!!!!!!!!!!bebeta!!!!!!!!!\n");
             struct Page *page_node = page_lookup_virtual(curenv->address_space.root, va, 0, 0);
+            cprintf("-----------0-------------\n");
             int k = (page_node->state & 0xF000) >> 12;
             int cur_size = swap_info[k].size;
             int flags = page_node->state & 0xFFF;
@@ -352,14 +354,17 @@ trap(struct Trapframe *tf) {
             flags &= ~PTE_PWT;
 
             LZ4_decompress_safe(swap_info[k].buffer, CompressionBuffer, cur_size, PAGE_SIZE);
-
+            cprintf("-----------1-------------\n");
             swap_shift(k);
             struct Page *tail = lru_list->tail;
+            cprintf("-----------2-------------\n");
             swap_push(tail);
             struct Page *pg = alloc_page(0, flags);
+            cprintf("-----------3-------------\n");
             if (!pg) {
                     panic("Page allocation failed in page_fault_handler\n");
                 }
+            cprintf("-----------4-------------\n");
             if (map_page(&curenv->address_space, (uintptr_t)va, pg, flags) < 0) {
                 panic("Failed to map page in page_fault_handler\n");
             }
@@ -401,7 +406,6 @@ trap(struct Trapframe *tf) {
             env_pop_tf(tf);
         }
     }
-
     assert(curenv);
 
     /* Copy trap frame (which is currently on the stack)

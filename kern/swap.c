@@ -64,41 +64,59 @@ void swap_shift(int k)
 }
 
 
-void add_to_lru_list(struct Page *pg)
-{
+void add_to_lru_list(struct Page *pg) {
     if (pg == NULL) {
-        panic("page NULL");
+        panic("add_to_lru_list: page is NULL");
     }
+
+    cprintf("Adding page %p to LRU list. Head: %p, Tail: %p, Size: %d\n",
+            pg, lru_list->head, lru_list->tail, lru_list->size);
 
     if (lru_list->size == 0) {
+        lru_list->head = pg;
         lru_list->tail = pg;
         pg->lru_next = NULL;
-    }
-
-    if (lru_list->size) {
+        pg->lru_prev = NULL;
+    } else {
         pg->lru_next = lru_list->head;
-        (lru_list->head)->lru_prev = pg;
+        lru_list->head->lru_prev = pg;
+        lru_list->head = pg;
+        pg->lru_prev = NULL;
     }
 
-    lru_list->head = pg;
-    pg->lru_prev = NULL;
-    lru_list->size += 1;
+    lru_list->size++;
 }
-
-
 void delete_from_lru_list(struct Page *pg)
 {
-    //cprintf("TAIL DELETE %0x\n", (int) pg);
-    if (lru_list->size == 1) {
-        lru_list->tail = NULL;
-        lru_list->head = NULL;
-    } else {
-        if (pg->lru_prev != NULL) {
-            (pg->lru_prev)->lru_next = NULL;
-        }
-        lru_list->tail = pg->lru_prev;
+    cprintf("!!\n");
+    if (pg == NULL) {
+        
+        panic("delete_from_lru_list: page is NULL");
     }
-    lru_list->size -= 1;
+    cprintf("!!1\n");
+    cprintf("Deleting page %p from LRU list. Head: %p, Tail: %p, Size: %d\n",
+            pg, lru_list->head, lru_list->tail, lru_list->size);
+
+    if (lru_list->size == 1) {
+        lru_list->head = NULL;
+        lru_list->tail = NULL;
+    } 
+    else if (pg == lru_list->head) {
+        lru_list->head = pg->lru_next;
+        lru_list->head->lru_prev = NULL;
+    }
+    else if (pg == lru_list->tail) {
+        lru_list->tail = pg->lru_prev;
+        lru_list->tail->lru_next = NULL;
+    }
+    else {
+        pg->lru_prev->lru_next = pg->lru_next;
+        pg->lru_next->lru_prev = pg->lru_prev;
+    }
 
     pg->lru_next = pg->lru_prev = NULL;
+    lru_list->size--;
+
+    cprintf("Page %p deleted. New Head: %p, Tail: %p, Size: %d\n",
+            pg, lru_list->head, lru_list->tail, lru_list->size);
 }
