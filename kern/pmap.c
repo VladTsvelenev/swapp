@@ -214,25 +214,25 @@ alloc_child(struct Page *parent, bool right) {
     // LAB 6: Your code here
 
     struct Page *new = NULL;
-	if (parent->class) {
-		new = alloc_descriptor(parent->state);
-		if (right) {
-			parent->right = new;
-			new->addr = parent->addr + (1ULL << (parent->class - 1));
-		} else {
-			parent->left = new;
-			new->addr = parent->addr;
-		}
-		new->left = NULL;
-		new->right = NULL;
-		new->parent = parent;
-		if (parent->refc) {
-			new->refc = 1;
-		} else {
-			new->refc = 0;
-		}
-		new->class = parent->class - 1;
-	}	
+    if (parent->class) {
+        new = alloc_descriptor(parent->state);
+        if (right) {
+            parent->right = new;
+            new->addr = parent->addr + (1ULL << (parent->class - 1));
+        } else {
+            parent->left = new;
+            new->addr = parent->addr;
+        }
+        new->left = NULL;
+        new->right = NULL;
+        new->parent = parent;
+        if (parent->refc) {
+            new->refc = 1;
+        } else {
+            new->refc = 0;
+        }
+        new->class = parent->class - 1;
+    }
     return new;
 }
 
@@ -996,7 +996,7 @@ map_page(struct AddressSpace *spc, uintptr_t addr, struct Page *page, int flags)
     /* NOTE ALLOC_WEAK cannot be map()'ed/unmap()'ed
      * since it does not store any
      * metadata and only exits as a part of page table */
-    if (page->refc) {
+    if (addr < MAX_USER_READABLE) {
         cprintf("delete from page_insert\n");
         delete_from_lru_list(page);
         add_to_lru_list(page);
@@ -1164,7 +1164,14 @@ alloc_page(int class, int flags) {
     if (!is_swap_full){
         is_swap_full = 1;
         swap_workout(); 
-        goto found;
+        for (int pclass = class; pclass < MAX_CLASS; pclass++, li = NULL) {
+            for (li = free_classes[pclass].next; li != &free_classes[pclass]; li = li->next) {
+                peer = (struct Page *)li;
+                assert(peer->state == ALLOCATABLE_NODE);
+                assert_physical(peer);
+                if (!(flags & ALLOC_BOOTMEM) || page2pa(peer) + CLASS_SIZE(class) < BOOT_MEM_SIZE) goto found;
+            }
+        }
     }
     return NULL;
 
@@ -1209,9 +1216,9 @@ found:
     }
 
     assert(page2pa(new) >= PADDR(end) || page2pa(new) + CLASS_MASK(new->class) < IOPHYSMEM);
-    if (new != NULL) {
-        add_to_lru_list(new);
-    }
+    //if (new != NULL) {
+    //    add_to_lru_list(new);
+    //}
     return new;
 }
 
@@ -1868,11 +1875,8 @@ init_shadow_pre(void) {
 
 void
 init_memory(void) {
-
-
     int res;
     (void)res;
-    is_swap_full = 0;
 
     init_allocator();
     if (trace_init) cprintf("Memory allocator is initialized\n");
@@ -2026,6 +2030,11 @@ init_memory(void) {
 
     check_virtual_tree(kspace.root, MAX_CLASS);
     if (trace_init) cprintf("Kernel virtual memory tree is correct\n");
+
+    lru_list = kzalloc_region(LRU_SIZE); 
+    if (lru_list == NULL) {
+        panic("Failed to allocate memory for lru_list");
+    }
 }
 
 static uintptr_t user_mem_check_addr;
@@ -2075,49 +2084,6 @@ user_mem_assert(struct Env *env, const void *va, size_t len, int perm) {
     }
 }
 
-// Function to update the PTE for a swapped page
-void update_pte(struct AddressSpace *as, struct Page *page, int swap_index)
-{
-    uintptr_t va = page2pa(page);
-    pml4e_t *pml4 = as->pml4;
-    pdpe_t *pdp = (pdpe_t *)KADDR(PTE_ADDR(pml4[PML4_INDEX(va)]));
-    if (!(pml4[PML4_INDEX(va)] & PTE_P)) return;
-
-    pde_t *pd = (pde_t *)KADDR(PTE_ADDR(pdp[PDP_INDEX(va)]));
-    if (!(pdp[PDP_INDEX(va)] & PTE_P)) return;
-
-    pte_t *pt = (pte_t *)KADDR(PTE_ADDR(pd[PD_INDEX(va)]));
-    if (!(pd[PD_INDEX(va)] & PTE_P)) return;
-
-    pt[PT_INDEX(va)] = (swap_index << 12) | (pt[PT_INDEX(va)] & 0xFFF);
-    pt[PT_INDEX(va)] &= ~PTE_P;
-    pt[PT_INDEX(va)] |= PTE_PWT;
-}
-
-// Function to update PTE for all environments and kernel
-void update_all_pte(struct Page *tail, int swap_index)
-{
-    for (int j = 0; j < NENV; j++) {
-        if (envs[j].env_status == ENV_RUNNABLE || envs[j].env_status == ENV_RUNNING) {
-            struct Page *found_page = page_lookup_virtual(envs[j].address_space.root, page2pa(tail), 0, 0);
-            if (found_page) {
-                update_pte(&envs[j].address_space, found_page, swap_index);
-                tail->refc--;
-                if (tail->refc == 0) {
-                    unmap_page_remove(tail);
-                }
-            }
-        }
-    }
-    struct Page *found_page = page_lookup_virtual(&root, page2pa(tail), 0, 0);
-    if (found_page) {
-        update_pte(&kspace, tail, swap_index);
-        tail->refc--;
-        if (tail->refc == 0) {
-            unmap_page_remove(tail);
-        }
-    }
-}
 
 
 void swap_workout()
@@ -2125,35 +2091,122 @@ void swap_workout()
     cprintf("WORKOUT\n");
     SwapShift = SwapBuffer;
     struct Page *tail;
+
     for (int k = 0; k < SWAP_AMOUNT; k++) {
         tail = lru_list->tail;
-        cprintf("DEBUG size %d\n", lru_list->size);
+        if (tail == NULL) {
+            cprintf("LRU list is empty, stopping.\n");
+            break;
+        }
+
+        cprintf("DEBUG: LRU list size = %d\n", lru_list->size);
+        cprintf("TAIL: Tail: %p\n", tail);
 
         int cur_size = LZ4_compress_default((char *)page2pa(tail), CompressionBuffer, PAGE_SIZE, COMP_SIZE);
+        if (cur_size <= 0) {
+            cprintf("Compression failed for page at %0x\n", (int)page2pa(tail));
+            break;
+        }
+
         memcpy(SwapShift, CompressionBuffer, cur_size);
         swap_info[k].buffer = SwapShift;
         swap_info[k].size = cur_size;
-        tail->state = SWAPPED_PAGE;
 
-        update_all_pte(tail, k);
+        cprintf("buffer: %p\n", swap_info[k].buffer);
+        for (int j = 0; j < NENV; j++) {
+            if (envs[j].env_status == ENV_RUNNABLE || envs[j].env_status == ENV_RUNNING) {
+                for (uintptr_t i = 0; i < PT_ENTRY_COUNT; i++) {
+                    uintptr_t va = i << PT_ENTRY_SHIFT;
+                    struct Page *node = page_lookup_virtual(envs[j].address_space.root, va, PT_ENTRY_SHIFT, LOOKUP_ALLOC);
+                    if (node && node->phy && page2pa(node->phy) == page2pa(tail)) {
+                        envs[j].swap_pages++;
+                        node->phy = NULL;              
+                        node->state &= ~PTE_P;         
+                        node->state |= PTE_PWT;   
+                    }
+                }
+            }
+        }
 
+        for (uintptr_t i = 0; i < PT_ENTRY_COUNT; i++) {
+            uintptr_t va = i << PT_ENTRY_SHIFT; 
+            struct Page *node = page_lookup_virtual(kspace.root, va, 0, 0);
+            if (node && node->phy && page2pa(node->phy) == page2pa(tail)) {
+                node->phy = NULL;            
+                node->state &= ~PTE_P;      
+                node->state |= PTE_PWT;  
+            }
+        }
+
+
+        //tail->refc = 0;
+        int tail_class = tail->class;
+        list_append(&free_classes[tail_class], (struct List *)tail);
+
+        if (lru_list->tail) {
+            struct Page *prev = lru_list->tail->lru_prev;
+            if (prev) {
+                prev->lru_next = NULL;
+            } else {
+                lru_list->head = NULL;
+            }
+            lru_list->tail = prev;
+            lru_list->size--;  
+        }
         SwapShift += cur_size;
     }
 }
 
 void swap_push(struct Page *tail)
 {
-    if (!tail) {
-        cprintf("swap_push: null page\n");
+    cprintf("SWAP PUSH\n");
+    int cur_size = LZ4_compress_default((char *)page2pa(tail), CompressionBuffer, PAGE_SIZE, COMP_SIZE);
+    if (cur_size <= 0) {
+        cprintf("Compression failed for page at %0x\n", (int)page2pa(tail));
         return;
     }
 
-    int k = SWAP_AMOUNT - 1;
-    int cur_size = LZ4_compress_default((char *)page2pa(tail), CompressionBuffer, PAGE_SIZE, COMP_SIZE);
-    memcpy(swap_info[k].buffer, CompressionBuffer, cur_size);
-    swap_info[k].size = cur_size;
+    memcpy(swap_info[SWAP_AMOUNT - 1].buffer, CompressionBuffer, cur_size);
+    swap_info[SWAP_AMOUNT - 1].size = cur_size;
 
-    tail->state = SWAPPED_PAGE;
+    cprintf("buffer: %p\n", swap_info[SWAP_AMOUNT - 1].buffer);
+    for (int j = 0; j < NENV; j++) {
+        if (envs[j].env_status == ENV_RUNNABLE || envs[j].env_status == ENV_RUNNING) {
+            for (uintptr_t i = 0; i < PT_ENTRY_COUNT; i++) {
+                uintptr_t va = i << PT_ENTRY_SHIFT;
+                struct Page *node = page_lookup_virtual(envs[j].address_space.root, va, PT_ENTRY_SHIFT, LOOKUP_ALLOC);
+                if (node && node->phy && page2pa(node->phy) == page2pa(tail)) {
+                    envs[j].swap_pages++;
+                    node->phy = NULL;              
+                    node->state &= ~PTE_P;         
+                    node->state |= PTE_PWT;   
+                }
+            }
+        }
+    }
 
-    update_all_pte(tail, k);
+
+    for (uintptr_t i = 0; i < PT_ENTRY_COUNT; i++) {
+        uintptr_t va = i << PT_ENTRY_SHIFT; 
+        struct Page *node = page_lookup_virtual(kspace.root, va, 0, 0);
+        if (node && node->phy && page2pa(node->phy) == page2pa(tail)) {
+            node->phy = NULL;            
+            node->state &= ~PTE_P;      
+            node->state |= PTE_PWT;  
+        }
+    }
+
+    int tail_class = tail->class;
+    list_append(&free_classes[tail_class], (struct List *)tail);
+
+    if (lru_list->tail) {
+        struct Page *prev = lru_list->tail->lru_prev;
+        if (prev) {
+            prev->lru_next = NULL;
+        } else {
+            lru_list->head = NULL;
+        }
+        lru_list->tail = prev;
+        lru_list->size--;  
+    }
 }

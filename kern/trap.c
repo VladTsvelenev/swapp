@@ -337,38 +337,40 @@ trap(struct Trapframe *tf) {
 
     /* #PF should be handled separately */
     if (tf->tf_trapno == T_PGFLT) {
+        uintptr_t va = rcr2();
+        cprintf("page fault va=%016lx addr=%016lx\n", tf->tf_rip, va);
         assert(current_space);
         assert(!in_page_fault);
         in_page_fault = 1;
-
-        uintptr_t va = rcr2();
+        cprintf("in page fault\n");
         if (va & PTE_PWT) {
             cprintf("!!!!!!!!!!!!bebeta!!!!!!!!!\n");
-            struct Page *page_node = page_lookup_virtual(curenv->address_space.root, va, 0, 0);
+            struct Page *page_node = page_lookup_virtual(current_space->root, va, 0, 0);
             cprintf("-----------0-------------\n");
             int k = (page_node->state & 0xF000) >> 12;
-            int cur_size = swap_info[k].size;
+            // int cur_size = swap_info[k].size;
             int flags = page_node->state & 0xFFF;
 
             flags |= PTE_P;
             flags &= ~PTE_PWT;
 
-            LZ4_decompress_safe(swap_info[k].buffer, CompressionBuffer, cur_size, PAGE_SIZE);
+            // LZ4_decompress_safe(swap_info[k].buffer, CompressionBuffer, cur_size, PAGE_SIZE);
             cprintf("-----------1-------------\n");
             swap_shift(k);
-            struct Page *tail = lru_list->tail;
+            // struct Page *tail = lru_list->tail;
             cprintf("-----------2-------------\n");
-            swap_push(tail);
+            // swap_push(tail);
             struct Page *pg = alloc_page(0, flags);
             cprintf("-----------3-------------\n");
             if (!pg) {
                     panic("Page allocation failed in page_fault_handler\n");
                 }
             cprintf("-----------4-------------\n");
-            if (map_page(&curenv->address_space, (uintptr_t)va, pg, flags) < 0) {
+            if (map_page(current_space, (uintptr_t)va & (~CLASS_MASK(0)), pg, flags) < 0) {
                 panic("Failed to map page in page_fault_handler\n");
             }
-            memcpy((char *)page2pa(pg), CompressionBuffer, PAGE_SIZE);
+            cprintf("-----------5-------------\n");
+            // memcpy((char *)page2pa(pg), CompressionBuffer, PAGE_SIZE);
             add_to_lru_list(pg);
         }
 
@@ -402,6 +404,7 @@ trap(struct Trapframe *tf) {
                     res ? can_redir ? "redirected to user" : "fault" : "resolved by kernel");
         }
         if (!res) {
+            cprintf("out page fault\n");
             in_page_fault = 0;
             env_pop_tf(tf);
         }

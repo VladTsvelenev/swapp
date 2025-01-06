@@ -37,7 +37,9 @@ void swap_init()
                     "     Лоботомия\n"
                     "\n";;
 
-    char dst[LZ4_compressBound(321)];
+    src[0] = src[0];
+
+    /*char dst[LZ4_compressBound(321)];
     cprintf("%d\n", LZ4_compressBound(4096));
     int cur_size = LZ4_compress_default(src, dst, 321, LZ4_compressBound(321));
     cprintf("%d\n", LZ4_compressBound(cur_size));
@@ -45,18 +47,20 @@ void swap_init()
     char final[321];
     LZ4_decompress_safe(dst, final, cur_size, 321);
     cprintf("%s\n", final);
+    */
 #endif
 
 }
 
 void swap_shift(int k)
 {
-    char * tmp = swap_info[k].buffer;
+    char *tmp = swap_info[k].buffer;
+    cprintf("%ld\n", (uintptr_t)tmp);
     cprintf("%ld\n", (uintptr_t) tmp);
     for (int i = k; i < SWAP_AMOUNT - 1; i++) {
         memmove(tmp, swap_info[i + 1].buffer, swap_info[i + 1].size);
         tmp += swap_info[i + 1].size;
-        swap_info[i + 1].buffer = tmp;
+        swap_info[i + 1].buffer = tmp; //?
         swap_info[i].size = swap_info[i + 1].size;
         cprintf("%ld\n", (uintptr_t) tmp);
     }
@@ -79,7 +83,7 @@ void add_to_lru_list(struct Page *pg) {
         pg->lru_prev = NULL;
     } else {
         pg->lru_next = lru_list->head;
-        lru_list->head->lru_prev = pg;
+        if (lru_list->head) lru_list->head->lru_prev = pg;
         lru_list->head = pg;
         pg->lru_prev = NULL;
     }
@@ -88,6 +92,9 @@ void add_to_lru_list(struct Page *pg) {
 }
 void delete_from_lru_list(struct Page *pg)
 {
+    if (!pg->lru_prev && !pg->lru_next) {
+        return;
+    }
     cprintf("!!\n");
     if (pg == NULL) {
         
@@ -108,11 +115,10 @@ void delete_from_lru_list(struct Page *pg)
     else if (pg == lru_list->tail) {
         lru_list->tail = pg->lru_prev;
         lru_list->tail->lru_next = NULL;
-    }
-    else {
-        pg->lru_prev->lru_next = pg->lru_next;
-        pg->lru_next->lru_prev = pg->lru_prev;
-    }
+    } else {
+        if (pg->lru_prev) pg->lru_prev->lru_next = pg->lru_next;
+        if (pg->lru_next) pg->lru_next->lru_prev = pg->lru_prev;
+     }
 
     pg->lru_next = pg->lru_prev = NULL;
     lru_list->size--;
