@@ -2030,11 +2030,6 @@ init_memory(void) {
 
     check_virtual_tree(kspace.root, MAX_CLASS);
     if (trace_init) cprintf("Kernel virtual memory tree is correct\n");
-
-    lru_list = kzalloc_region(LRU_SIZE); 
-    if (lru_list == NULL) {
-        panic("Failed to allocate memory for lru_list");
-    }
 }
 
 static uintptr_t user_mem_check_addr;
